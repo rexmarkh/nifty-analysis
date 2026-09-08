@@ -495,6 +495,27 @@ function renderEntry(idx) {
   const openPos = clampPct(e.open, e.dayLow, e.dayHigh);
   const closePos = clampPct(e.close, e.dayLow, e.dayHigh);
 
+  const ml = e.markedLevels;
+  const mlRow = (x, tone) => `<li class="flex items-baseline gap-2 py-1">
+    <span class="tnum font-semibold ${tone === 'r' ? 'text-down' : 'text-up'}">${fmt(x.price)}</span>
+    <span class="text-[12px] text-muted leading-snug">${x.label || ''}</span>
+  </li>`;
+  const markedLevelsHtml = ml && (((ml.resistance || []).length) || ((ml.support || []).length)) ? `
+    <div class="bg-panel border border-border rounded-2xl p-5 shadow-sm shadow-black/5 mb-6">
+      <div class="sect mb-2">S/R marked on chart${ml.spot != null ? ` <span class="normal-case font-normal tracking-normal text-subtle">&mdash; from spot ${fmt(ml.spot)}${ml.markedOn ? ', ' + ml.markedOn : ''}</span>` : ''}</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1">
+        <div>
+          <div class="text-[11px] font-semibold uppercase tracking-wider text-down mb-1">Resistance</div>
+          <ul>${(ml.resistance || []).slice().sort((a, b) => a.price - b.price).map(x => mlRow(x, 'r')).join('')}</ul>
+        </div>
+        <div>
+          <div class="text-[11px] font-semibold uppercase tracking-wider text-up mb-1">Support</div>
+          <ul>${(ml.support || []).slice().sort((a, b) => b.price - a.price).map(x => mlRow(x, 's')).join('')}</ul>
+        </div>
+      </div>
+      ${ml.note ? `<p class="text-[12px] text-subtle mt-3">${ml.note}</p>` : ''}
+    </div>` : '';
+
   entryContainer.innerHTML = `
     <!-- Hero row -->
     <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
@@ -561,6 +582,8 @@ function renderEntry(idx) {
         </div>
       </div>
     </div>
+
+    ${markedLevelsHtml}
 
     ${newsHtml ? `
     <div class="bg-panel border border-border rounded-2xl p-5 shadow-sm shadow-black/5 mb-6">
