@@ -157,6 +157,10 @@ let SPARK = null;
 
 const fmt = n => n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const fmt0 = n => n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+
+/* Each entry is framed by the NEXT session it plans for (tradePlan.for); fall back to its own date. */
+const planDateOf = e => (e.tradePlan && e.tradePlan.for) || e.date;
+const dfmt = (iso, opts) => new Date(iso + 'T00:00:00').toLocaleDateString('en-IN', opts);
 const clampPct = (v, lo, hi) => hi === lo ? 50 : Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
 
 const dateListDesktop = document.getElementById('dateListDesktop');
@@ -185,14 +189,14 @@ function dateListItemHtml(e, i) {
   const up = e.change >= 0;
   const chgColor = up ? 'text-up' : 'text-down';
   const chgSign = up ? '+' : '';
-  const d = new Date(e.date + 'T00:00:00');
-  const label = d.toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' });
+  const label = dfmt(planDateOf(e), { weekday: 'short', month: 'short', day: 'numeric' });
+  const fromLabel = dfmt(e.date, { day: 'numeric', month: 'short' });
   return `<button type="button" data-index="${i}" data-active="${i === activeIndex}" class="date-item w-full text-left px-3 py-2.5 rounded-xl border border-transparent hover:bg-ink/[0.03] hover:border-border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50">
     <div class="flex items-center justify-between gap-2">
       <span class="text-sm font-medium text-ink2">${label}</span>
       <span class="inline-flex items-center gap-1 text-xs font-medium ${chgColor}">${arrow(up)}${chgSign}${e.changePct}%</span>
     </div>
-    <div class="text-xs ${up ? 'text-up' : 'text-down'} mt-0.5 tnum">${fmt(e.close)}</div>
+    <div class="text-xs text-subtle mt-0.5">from ${fromLabel} close <span class="${up ? 'text-up' : 'text-down'} tnum">${fmt(e.close)}</span></div>
   </button>`;
 }
 
@@ -312,7 +316,10 @@ function renderEntry(idx) {
   const up = e.change >= 0;
   const chgColor = up ? 'text-up' : 'text-down';
   const chgSign = up ? '+' : '';
-  const longDate = new Date(e.date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const longDate = dfmt(e.date, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const planLongDate = dfmt(planDateOf(e), { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const sessionShort = dfmt(e.date, { weekday: 'short', day: 'numeric', month: 'short' });
+  const hasPlanDate = !!(e.tradePlan && e.tradePlan.for);
 
   headerQuote.innerHTML = `
     <div class="leading-none">
@@ -383,68 +390,66 @@ function renderEntry(idx) {
     tp.qty ? tp.qty + ' qty' : null,
     tp.instrument || null
   ].filter(Boolean).join(' · ') : '';
-  const tradePlanRows = tp ? (tp.setups || []).map(s => {
+  const kv = (label, val, valCls) => val ? `<div class="flex gap-3">
+    <dt class="text-subtle shrink-0 w-[68px]">${label}</dt>
+    <dd class="${valCls || 'text-ink2'} flex-1">${val}</dd>
+  </div>` : '';
+  const setupCards = tp ? (tp.setups || []).map((s, idx) => {
     const b = (s.bias || '').toLowerCase();
-    const badge = b === 'long' ? 'bg-up/10 text-up border-up/30'
-      : b === 'short' ? 'bg-down/10 text-down border-down/30'
-      : 'bg-ink/5 text-muted border-border';
-    return `<tr class="border-b border-border last:border-0 align-top">
-      <td class="px-3 py-3">
-        <div class="font-medium text-ink2">${s.name || ''}</div>
-        ${s.priority ? `<div class="text-xs text-subtle mt-0.5">${s.priority}</div>` : ''}
-        ${b ? `<span class="inline-block mt-1 text-xs px-2 py-0.5 rounded-md border ${badge}">${b}</span>` : ''}
-        ${(s.entryTime || s.exitTime) ? `<div class="text-xs text-muted mt-1.5 leading-relaxed">${s.entryTime ? `<span class="text-subtle">Entry</span> ${s.entryTime}` : ''}${s.entryTime && s.exitTime ? '<br>' : ''}${s.exitTime ? `<span class="text-subtle">Exit</span> ${s.exitTime}` : ''}</div>` : ''}
-      </td>
-      <td class="px-3 py-3 text-ink2 break-words">${s.trigger || ''}</td>
-      <td class="px-3 py-3 text-ink2 break-words">${s.entry || ''}</td>
-      <td class="px-3 py-3 text-ink2 break-words">${s.stop || ''}${s.stopPoints ? ` <span class="text-subtle">(${s.stopPoints} pt)</span>` : ''}</td>
-      <td class="px-3 py-3 text-amber break-words">${s.risk || ''}</td>
-      <td class="px-3 py-3 text-ink2 break-words">${s.targets || ''}</td>
-    </tr>`;
+    const isLong = b === 'long', isShort = b === 'short';
+    const pill = isLong ? '<span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-up/12 text-up">▲ LONG</span>'
+      : isShort ? '<span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-down/12 text-down">▼ SHORT</span>'
+      : '';
+    const tint = isLong ? 'border-up/25' : isShort ? 'border-down/25' : 'border-border';
+    const win = [s.entryTime, s.exitTime ? 'exit: ' + s.exitTime : ''].filter(Boolean).join(' · ');
+    return `<div class="border ${tint} rounded-xl p-4">
+      <div class="flex flex-wrap items-center gap-2 mb-1">
+        <span class="text-[11px] font-semibold text-subtle">${String.fromCharCode(65 + idx)}</span>
+        ${pill}
+        <span class="font-semibold text-ink2 text-[13.5px]">${(s.name || '').replace(/^[A-D]\s*[-–—]\s*/, '')}</span>
+      </div>
+      ${s.priority ? `<div class="text-[11px] text-subtle mb-3">${s.priority}</div>` : '<div class="mb-3"></div>'}
+      <div class="rounded-lg px-3 py-2 mb-3 text-[13px] leading-snug" style="background:rgb(var(--accent)/.08)">
+        <span class="text-accent font-semibold text-[10px] uppercase tracking-wider">Trigger</span><br>${s.trigger || ''}
+      </div>
+      <dl class="text-[13px] leading-relaxed space-y-1.5">
+        ${kv('Entry', s.entry)}
+        ${kv('Stop', (s.stop || '') + (s.stopPoints ? ` <span class="text-subtle">(${s.stopPoints} pt)</span>` : ''))}
+        ${kv('Targets', s.targets)}
+        ${kv('Window', win)}
+        ${kv('Risk', s.risk, 'text-amber')}
+      </dl>
+    </div>`;
   }).join('') : '';
   const tradePlanHtml = tp ? `
-    <div class="bg-panel border border-border rounded-2xl p-5 shadow-sm shadow-black/5 mb-6">
-      <div class="flex flex-wrap items-baseline justify-between gap-2 mb-2">
-        <div class="sect">Intraday trade plan${tp.for ? ` <span class="normal-case font-normal tracking-normal text-subtle">&mdash; for ${new Date(tp.for + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</span>` : ''}</div>
+    <div class="bg-panel border border-border rounded-2xl p-5 shadow-sm shadow-black/5 mb-4">
+      <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+        <div class="sect">Intraday trade plan</div>
         ${tpMeta ? `<div class="text-xs text-subtle">${tpMeta}</div>` : ''}
       </div>
-      ${tp.context ? `<p class="text-sm text-ink2 leading-relaxed mb-3">${tp.context}</p>` : ''}
-      ${tp.pivots ? `<div class="border rounded-xl px-4 py-3 mb-3 text-sm leading-relaxed" style="background-color:rgb(var(--amber)/.10);border-color:rgb(var(--amber)/.35)">
-        <div class="sect mb-1" style="color:rgb(var(--amber))">Daily pivots &amp; CPR${tp.pivots.basis ? ` <span class="normal-case font-normal tracking-normal text-subtle">&mdash; ${tp.pivots.basis}</span>` : ''}</div>
-        ${(tp.pivots.pdh != null || tp.pivots.pdl != null) ? `<div><span class="text-subtle">PDH</span> ${tp.pivots.pdh != null ? fmt(tp.pivots.pdh) : '-'} &nbsp; <span class="text-subtle">PDL</span> ${tp.pivots.pdl != null ? fmt(tp.pivots.pdl) : '-'}</div>` : ''}
-        ${tp.pivots.cpr ? `<div><span class="text-subtle">CPR</span> ${tp.pivots.cpr}</div>` : ''}
-        ${tp.pivots.r ? `<div><span class="text-subtle">Resistance</span> ${tp.pivots.r}</div>` : ''}
-        ${tp.pivots.s ? `<div><span class="text-subtle">Support</span> ${tp.pivots.s}</div>` : ''}
+      <p class="text-[12px] text-subtle mb-3">Each card below is one scenario. Do nothing until a card's <span class="text-ink2 font-medium">Trigger</span> is met on the live chart &mdash; then take that card's entry, stop and targets. Numbers are NIFTY index / option-premium points.</p>
+      ${tp.context ? `<p class="text-sm text-ink2 leading-relaxed mb-4">${tp.context}</p>` : ''}
+      ${tp.pivots ? `<div class="border rounded-xl p-3 mb-4 text-[12.5px] leading-relaxed" style="background-color:rgb(var(--amber)/.10);border-color:rgb(var(--amber)/.35)">
+        <div class="text-[10px] uppercase tracking-wider mb-1.5" style="color:rgb(var(--amber))">Pivots &amp; CPR${tp.pivots.basis ? ` &mdash; ${tp.pivots.basis}` : ''}</div>
+        <div class="grid sm:grid-cols-2 gap-x-6 gap-y-0.5">
+          ${(tp.pivots.pdh != null || tp.pivots.pdl != null) ? `<div><span class="text-subtle">PDH</span> <span class="tnum">${tp.pivots.pdh != null ? fmt(tp.pivots.pdh) : '-'}</span> &nbsp;·&nbsp; <span class="text-subtle">PDL</span> <span class="tnum">${tp.pivots.pdl != null ? fmt(tp.pivots.pdl) : '-'}</span></div>` : ''}
+          ${tp.pivots.cpr ? `<div><span class="text-subtle">CPR</span> ${tp.pivots.cpr}</div>` : ''}
+          ${tp.pivots.r ? `<div><span class="text-down font-medium">R</span> ${tp.pivots.r}</div>` : ''}
+          ${tp.pivots.s ? `<div><span class="text-up font-medium">S</span> ${tp.pivots.s}</div>` : ''}
+        </div>
       </div>` : ''}
-      <div class="border border-border rounded-xl overflow-hidden overflow-x-auto">
-        <table class="w-full text-sm table-fixed min-w-[900px]">
-          <colgroup>
-            <col class="w-1/6"><col class="w-1/6"><col class="w-1/6"><col class="w-1/6"><col class="w-1/6"><col class="w-1/6">
-          </colgroup>
-          <thead class="bg-ink/[0.03] text-muted text-xs uppercase tracking-wide">
-            <tr>
-              <th class="text-left font-medium px-3 py-2.5">Setup</th>
-              <th class="text-left font-medium px-3 py-2.5">Trigger</th>
-              <th class="text-left font-medium px-3 py-2.5">Entry</th>
-              <th class="text-left font-medium px-3 py-2.5">Stop</th>
-              <th class="text-left font-medium px-3 py-2.5">Risk</th>
-              <th class="text-left font-medium px-3 py-2.5">Targets</th>
-            </tr>
-          </thead>
-          <tbody>${tradePlanRows}</tbody>
-        </table>
-      </div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">${setupCards}</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
         ${(tp.timing && tp.timing.length) ? `<div>
-          <div class="sect mb-1.5">Timing</div>
-          <ul class="space-y-1.5">${tp.timing.map(t => `<li class="flex gap-2 text-sm text-ink2 leading-relaxed"><span class="text-accent mt-1 shrink-0">&bull;</span><span>${t}</span></li>`).join('')}</ul>
+          <div class="text-[10px] uppercase tracking-wider text-subtle mb-1.5">Rules &amp; timing</div>
+          <ul class="space-y-1.5">${tp.timing.map(t => `<li class="flex gap-2 text-[13px] text-ink2 leading-relaxed"><span class="text-accent mt-1 shrink-0">&bull;</span><span>${t}</span></li>`).join('')}</ul>
         </div>` : ''}
         ${tp.sizingNote ? `<div>
-          <div class="sect mb-1.5">Sizing</div>
-          <p class="text-sm text-muted leading-relaxed">${tp.sizingNote}</p>
+          <div class="text-[10px] uppercase tracking-wider text-subtle mb-1.5">Sizing</div>
+          <p class="text-[13px] text-muted leading-relaxed">${tp.sizingNote}</p>
         </div>` : ''}
       </div>
-      <p class="text-xs text-subtle mt-2">${tp.disclaimer || 'Level-based scenarios, not investment advice &mdash; wait for the trigger and confirm with live price action.'}</p>
+      <p class="text-[11px] text-subtle mt-3 pt-3 border-t border-border">${tp.disclaimer || 'Level-based scenarios, not investment advice — wait for the trigger and confirm with live price action.'}</p>
     </div>` : '';
 
   /* -- KPI tiles -- */
@@ -517,118 +522,77 @@ function renderEntry(idx) {
     </div>` : '';
 
   entryContainer.innerHTML = `
-    <!-- Hero row -->
-    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
-      <div class="bg-panel border border-border rounded-2xl p-5 shadow-sm shadow-black/5">
-        <div class="flex items-center gap-2 text-xs text-muted mb-3">
-          <span class="font-medium text-ink2">${e.symbol}</span>
-          <span class="text-subtle">&middot;</span>
-          <span>${longDate}</span>
-        </div>
-        <div class="flex flex-wrap items-end gap-x-4 gap-y-2">
-          <div class="text-4xl font-semibold ${chgColor} tnum leading-none">${fmt(e.close)}</div>
-          <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-medium ${up ? 'bg-up/10 text-up' : 'bg-down/10 text-down'}">
-            ${arrow(up)} ${chgSign}${fmt(e.change)} &middot; ${chgSign}${e.changePct}%
-          </div>
-        </div>
-
-        <div class="mt-6">
-          <div class="flex justify-between text-[11px] text-muted mb-2">
-            <span>Low <span class="${trendCls(e.dayLow)} tnum">${fmt(e.dayLow)}</span> <span class="text-subtle">${e.dayLowTime || ''}</span></span>
-            <span>High <span class="${trendCls(e.dayHigh)} tnum">${fmt(e.dayHigh)}</span></span>
-          </div>
-          <div class="relative h-2 rounded-full bg-ink/[0.07]">
-            <span class="absolute top-1/2 w-2.5 h-2.5 rounded-full border-2 border-muted bg-panel" style="left:${openPos}%;transform:translate(-50%,-50%)" title="Open ${fmt(e.open)}"></span>
-            <span class="absolute top-1/2 w-3 h-3 rounded-full ${up ? 'bg-up' : 'bg-down'}" style="left:${closePos}%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px rgb(var(--panel))" title="Close ${fmt(e.close)}"></span>
-          </div>
-          <div class="flex gap-4 mt-2.5 text-[11px] text-subtle">
-            <span class="inline-flex items-center gap-1.5"><span class="inline-block w-2 h-2 rounded-full border-2 border-muted"></span> Open <span class="${trendCls(e.open)} tnum">${fmt(e.open)}</span></span>
-            <span class="inline-flex items-center gap-1.5"><span class="inline-block w-2 h-2 rounded-full ${up ? 'bg-up' : 'bg-down'}"></span> Close <span class="${chgColor} tnum">${fmt(e.close)}</span></span>
-            <span class="inline-flex items-center gap-1.5">Prev <span class="text-ink2 tnum">${fmt(e.prevClose)}</span></span>
-          </div>
-        </div>
+    <!-- Plan-date banner: this entry is the plan for the NEXT session -->
+    <div class="bg-panel border border-border rounded-2xl p-4 sm:p-5 shadow-sm shadow-black/5 mb-4">
+      <div class="text-[11px] text-muted uppercase tracking-wider mb-1">${e.symbol} &middot; ${hasPlanDate ? 'Intraday plan for' : 'Session'}</div>
+      <div class="text-2xl font-semibold text-ink">${planLongDate}</div>
+      <div class="text-[12px] text-muted mt-2">
+        Built on the <span class="text-ink2 font-medium">${sessionShort}</span> close
+        <span class="${chgColor} tnum">${fmt(e.close)}</span> <span class="${chgColor}">(${chgSign}${e.changePct}%)</span>
+        &nbsp;&middot;&nbsp; RSI <span class="${rsiValCls} tnum">${e.rsi14}</span> <span class="${rsiValCls}">${rsiZone}</span>
+        &nbsp;&middot;&nbsp; 200-DMA <span class="${dmaUp ? 'text-up' : 'text-down'}">${dmaUp ? '+' : ''}${dmaDist.toFixed(1)}%</span>
+        &nbsp;&middot;&nbsp; CPR ${cprValue}${e.cpr && e.cpr.label ? ` <span class="text-subtle">${e.cpr.label}</span>` : ''}
       </div>
-
-      ${sparkCardHtml()}
+      ${e.analysedAt ? (() => {
+        const raw = String(e.analysedAt).replace('T', ' ');
+        const d = raw.slice(0, 10), t = raw.slice(11, 16);
+        return `<div class="text-[11px] text-subtle mt-1.5">Analysed ${dfmt(d, { weekday: 'short', day: 'numeric', month: 'short' })}${t ? ', ' + t + ' IST' : ''}</div>`;
+      })() : ''}
     </div>
 
-    <!-- KPI tiles -->
-    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 mb-6">
-      ${tile('Open', fmt(e.open), vsPrev(e.open), trendCls(e.open), trendTone(e.open))}
-      ${tile('Day High', fmt(e.dayHigh), vsPrev(e.dayHigh), trendCls(e.dayHigh), trendTone(e.dayHigh))}
-      ${tile('Day Low', fmt(e.dayLow), (e.dayLowTime ? e.dayLowTime + ' &middot; ' : '') + vsPrev(e.dayLow), trendCls(e.dayLow), trendTone(e.dayLow))}
-      ${tile('Prev Close', fmt(e.prevClose))}
-      ${rsiTile}
-      ${tile('200-DMA', fmt(e.sma200), dmaSub, dmaUp ? 'text-up' : 'text-down', dmaUp ? 'up' : 'down')}
-      ${tile('CPR width', cprValue, cprSub)}
-    </div>
+    <!-- THE PLAN — next-day intraday (primary content) -->
+    ${tradePlanHtml || '<div class="bg-panel border border-border rounded-2xl p-5 text-sm text-muted mb-4">No intraday trade plan on this entry.</div>'}
 
-    <!-- Narrative + levels -->
-    <div class="grid grid-cols-1 gap-4 mb-6 items-start">
-      <div class="bg-panel border border-border rounded-2xl p-5 shadow-sm shadow-black/5">
-        <div class="sect mb-2">What happened</div>
-        <p class="text-sm text-ink2 leading-relaxed">${e.summary}</p>
-      </div>
-
-      <div class="bg-panel border border-border rounded-2xl p-5 shadow-sm shadow-black/5">
-        <div class="sect mb-2">Levels respected / broken</div>
-        <div class="border border-border rounded-xl overflow-hidden overflow-x-auto">
-          <table class="w-full text-sm table-fixed">
-            <colgroup>
-              <col class="w-[46%]"><col class="w-[15%]"><col class="w-[15%]"><col class="w-[24%]">
-            </colgroup>
-            <tbody>${levelsHtml}</tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
+    <!-- S/R levels for tomorrow -->
     ${markedLevelsHtml}
 
+    <!-- Events that can move Nifty -->
     ${newsHtml ? `
-    <div class="bg-panel border border-border rounded-2xl p-5 shadow-sm shadow-black/5 mb-6">
-      <div class="sect mb-1">Market events &amp; news ahead</div>
+    <div class="bg-panel border border-border rounded-2xl p-5 shadow-sm shadow-black/5 mb-4">
+      <div class="sect mb-1">Events that can move Nifty</div>
       <ul>${newsHtml}</ul>
     </div>` : ''}
 
-    <!-- Tomorrow -->
-    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6 items-start">
-      <div class="bg-panel border border-border rounded-2xl p-5 shadow-sm shadow-black/5">
-        <div class="sect mb-2">Tomorrow's key levels &mdash; entry / exit reference</div>
-        <div class="border border-border rounded-xl overflow-hidden overflow-x-auto">
-          <table class="w-full text-sm table-fixed">
-            <colgroup>
-              <col class="w-[40%]"><col class="w-[15%]"><col class="w-[15%]"><col class="w-[30%]">
-            </colgroup>
-            <thead class="bg-ink/[0.03] text-muted text-xs uppercase tracking-wide">
-              <tr>
-                <th class="text-left font-medium px-4 py-2.5">Level</th>
-                <th class="text-right font-medium px-4 py-2.5">Price</th>
-                <th class="text-right font-medium px-4 py-2.5">Type</th>
-                <th class="text-right font-medium px-4 py-2.5">Action</th>
-              </tr>
-            </thead>
-            <tbody>${tomorrowLevelsHtml}</tbody>
-          </table>
+    <!-- Full analysis — the ${sessionShort} session's observations (collapsed by default) -->
+    <details class="bg-panel border border-border rounded-2xl shadow-sm shadow-black/5 mb-4 group">
+      <summary class="cursor-pointer list-none p-5 flex items-center justify-between gap-3">
+        <span class="sect">Full analysis &mdash; ${sessionShort} session observations</span>
+        <span class="text-subtle text-[11px] shrink-0"><span class="group-open:hidden">show &plus;</span><span class="hidden group-open:inline">hide &minus;</span></span>
+      </summary>
+      <div class="px-5 pb-5 space-y-5 border-t border-border pt-4">
+        <div>
+          <div class="sect mb-2">${sessionShort} snapshot</div>
+          <div class="flex flex-wrap gap-x-5 gap-y-1.5 text-[13px] text-muted">
+            <span>Open <span class="text-ink2 tnum">${fmt(e.open)}</span></span>
+            <span>High <span class="text-ink2 tnum">${fmt(e.dayHigh)}</span></span>
+            <span>Low <span class="text-ink2 tnum">${fmt(e.dayLow)}</span> <span class="text-subtle">${e.dayLowTime || ''}</span></span>
+            <span>Close <span class="${chgColor} tnum">${fmt(e.close)}</span> <span class="${chgColor}">${chgSign}${fmt(e.change)} &middot; ${chgSign}${e.changePct}%</span></span>
+            <span>Prev <span class="text-ink2 tnum">${fmt(e.prevClose)}</span></span>
+            <span>RSI&middot;14D <span class="${rsiValCls} tnum">${e.rsi14}</span> <span class="${rsiValCls}">${rsiZone}</span></span>
+            <span>200-DMA <span class="text-ink2 tnum">${fmt(e.sma200)}</span> <span class="${dmaUp ? 'text-up' : 'text-down'}">${dmaUp ? '+' : ''}${dmaDist.toFixed(2)}%</span></span>
+            <span>CPR width ${cprValue}${e.cpr && e.cpr.range ? ` <span class="text-subtle">${e.cpr.range}</span>` : ''}</span>
+          </div>
         </div>
-        <p class="text-xs text-subtle mt-2">Reference only, not investment advice &mdash; confirm with live price action before entering/exiting.</p>
-      </div>
-
-      <div class="space-y-4">
-        <div class="bg-panel border border-border rounded-2xl p-5 shadow-sm shadow-black/5">
-          <div class="sect mb-2">Watch tomorrow</div>
-          <ul class="space-y-2">${watchHtml}</ul>
+        <div>
+          <div class="sect mb-2">What happened</div>
+          <p class="text-sm text-ink2 leading-relaxed">${e.summary}</p>
         </div>
-
-        ${e.notes ? `
-        <div class="bg-panel border border-border rounded-2xl p-5 shadow-sm shadow-black/5">
-          <div class="sect mb-2">Notes</div>
-          <p class="text-sm text-muted leading-relaxed">${e.notes}</p>
-        </div>` : ''}
+        <div>
+          <div class="sect mb-2">Levels respected / broken</div>
+          <div class="border border-border rounded-xl overflow-hidden overflow-x-auto">
+            <table class="w-full text-sm table-fixed"><colgroup><col class="w-[46%]"><col class="w-[15%]"><col class="w-[15%]"><col class="w-[24%]"></colgroup><tbody>${levelsHtml}</tbody></table>
+          </div>
+        </div>
+        <div>
+          <div class="sect mb-2">Tomorrow's key levels &mdash; entry / exit reference</div>
+          <div class="border border-border rounded-xl overflow-hidden overflow-x-auto">
+            <table class="w-full text-sm table-fixed"><colgroup><col class="w-[40%]"><col class="w-[15%]"><col class="w-[15%]"><col class="w-[30%]"></colgroup><thead class="bg-ink/[0.03] text-muted text-xs uppercase tracking-wide"><tr><th class="text-left font-medium px-4 py-2.5">Level</th><th class="text-right font-medium px-4 py-2.5">Price</th><th class="text-right font-medium px-4 py-2.5">Type</th><th class="text-right font-medium px-4 py-2.5">Action</th></tr></thead><tbody>${tomorrowLevelsHtml}</tbody></table>
+          </div>
+        </div>
+        ${watchHtml ? `<div><div class="sect mb-2">Watch tomorrow</div><ul class="space-y-2">${watchHtml}</ul></div>` : ''}
+        ${e.notes ? `<div><div class="sect mb-2">Notes</div><p class="text-sm text-muted leading-relaxed">${e.notes}</p></div>` : ''}
       </div>
-    </div>
-
-    ${tradePlanHtml}
+    </details>
   `;
 
   wireSparkline();
